@@ -27,7 +27,7 @@ class Cpu:
                           'Y': 0,  # Register Y
                           'P': 0b00100000}  # Processor Status
         # 状态标志，有些标志硬件自动设置，模拟时要完成对应功能
-        # cpu使用1 bit表示一个标志，软件模拟就不必了吧？待修改
+        # cpu使用1 bit表示一个标志，软件模拟就不必了吧？  ——压栈要用
         # 有一个将标志寄存器8位压栈操作，不模拟该寄存器，分开保存状态，如何保存所有状态？
         self.statusFlags = {'c': 0,  # Carry Flag
                             'z': 1,  # Zero Flag
@@ -44,6 +44,10 @@ class Cpu:
         # 小端模式低位存低位，高位存高位。
         self.registers['PC'] = self.memory[0xFFFC] | (self.memory[0xFFFD] << 8)
 
+        self.clock_count = 0
+
+        # 记录cpu共运行了多少周期，用于测试
+        self.all_cycles = 0
         # 临时载入一个nes用于测试
         self.cart = nes_data
         self.init_memory()
@@ -399,12 +403,50 @@ class Cpu:
         :param cycle_count:
         :return:
         """
-        print('执行%s次。' % cycle_count)
-        while cycle_count > 0:
+        self.clock_count += cycle_count
+        while self.clock_count > 0:
+            self.check_log()
+
             op = self.memory[self.registers['PC']]
-            print(hex(self.registers['PC']), ':', cpu6502.op_data[op])
             cycles = self.instructions[op](self)
-            cycle_count -= cycles
+            self.all_cycles += cycles
+            self.clock_count -= cycles
+
+    def check_log(self):
+        """
+        检查指令及寄存器状态，是否与另一模拟器（公认模拟准确）一致。
+        :return:
+        """
+        op = self.memory[self.registers['PC']]
+        # 检查指令与寄存器状态是否与已有log一致
+        exist_log = self.nes_log_file.readline()
+        logs = exist_log.split()
+        log_addr = int('0x' + logs[0], 16)
+        log_op = int('0x' + logs[1], 16)
+        for i in range(len(logs)):
+            if 'A:' in logs[i]:
+                log_A = int('0x' + logs[i][2:], 16)
+                log_X = int('0x' + logs[i + 1][2:], 16)
+                log_Y = int('0x' + logs[i + 2][2:], 16)
+                log_P = int('0x' + logs[i + 3][2:], 16)
+                log_SP = int('0x' + logs[i + 4][3:], 16)
+                break
+        # 当前执行指令，以及本指令  执行完  之后的寄存器状态
+        print(hex(self.registers['PC']), ':', hex(op), cpu6502.op_data[op], 'A:',
+              hex(self.registers['A']), hex(self.registers['X']), hex(self.registers['Y']),
+              hex(self.registers['P']), hex(self.registers['SP']))
+        print(hex(log_addr), ':', hex(log_op), cpu6502.op_data[op], 'A:',
+              hex(log_A), hex(log_X), hex(log_Y),
+              hex(log_P), hex(log_SP))
+        print()
+        if (self.registers['PC'] != log_addr) or (self.registers['A'] != log_A) or (
+                self.registers['X'] != log_X) or (self.registers['Y'] != log_Y):
+            print('bu yi zhi ')
+
+    def read_log(self):
+        self.nes_log = False
+        self.nes_log_file = open('nestest.log', 'r')
+        # self.nes_log_file.readline()
 
 
 def test_cpu():
@@ -415,11 +457,13 @@ def test_cpu():
     nes = NesLoader('nestest.nes')
     if nes.open_success:
         cpu = Cpu(nes_data=nes)
+        cpu.read_log()
         while True:
             cpu.run_cycles(10)
             text = input('按q退出，其他任意键继续')
             if text == 'q':
                 break
+        cpu.nes_log_file.close()
 
 
 if __name__ == '__main__':
