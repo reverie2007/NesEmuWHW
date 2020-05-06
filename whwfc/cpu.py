@@ -5,6 +5,7 @@ import numpy as np
 from nesloader import NesLoader
 import zerafael_instructions as instructions
 import cpu6502
+from ppu import PPU
 
 
 class Cpu:
@@ -19,9 +20,12 @@ class Cpu:
     """
 
     def __init__(self, nes_data):
+        # 外部依赖，暂时用ppu，实际应该与总线打交道
+        self.ppu = PPU()
+
         # 寄存器
         self.registers = {'PC': 0,  # Program Counter，16位，
-                          'SP': 0xFF,  # Stack Pointer
+                          'SP': 0xFD,  # Stack Pointer,原代码是0xFF，好像应该是0xfd
                           'A': 0,  # Accumulator
                           'X': 0,  # Register X
                           'Y': 0,  # Register Y
@@ -39,12 +43,6 @@ class Cpu:
 
         # 模拟64k内存
         self.memory = [0] * 0x10000
-        # 设置开始指令所处的地址存放在0xFFFC,0xFFFD两个字节，将这两个地址存入程序计数器，
-        # 开始时cpu从程序计数器获取地址，从获取的地址开始执行，
-        # 小端模式低位存低位，高位存高位。
-        self.registers['PC'] = self.memory[0xFFFC] | (self.memory[0xFFFD] << 8)
-
-        self.clock_count = 0
 
         # 记录cpu共运行了多少周期，用于测试
         self.all_cycles = 0
@@ -288,6 +286,16 @@ class Cpu:
                              0xFF: instructions.ISB_Absolute_X
                              }
 
+        # 一切准备好之后，设置启动地址
+        # 设置开始指令所处的地址存放在0xFFFC,0xFFFD两个字节，将这两个地址存入程序计数器，
+        # 开始时cpu从程序计数器获取地址，从获取的地址开始执行，
+        # 小端模式低位存低位，高位存高位。
+        self.registers['PC'] = self.memory[0xFFFC] | (self.memory[0xFFFD] << 8) & 0xffff
+        self.clock_count = 0
+
+        # 开始禁止中断标志是1？？？
+        self.registers['P'] |= 0b00000100
+
     def doNMI(self):
         self.pushStack((self.registers['PC'] >> 8) & 0xFF)
         self.pushStack(self.registers['PC'] & 0xFF)
@@ -394,6 +402,9 @@ class Cpu:
         for i in range(0x20):
             self.memory[i + 0x4000] = 0xFF
 
+        start = self.memory[0xFFFC] | (self.memory[0xFFFD] << 8) & 0xffff
+        print('开始地址：', hex(start))
+
     def run_cycles(self, cycle_count):
         """
         cpu运行指定周期次数，每次cycle_count减去指令周期，小于0之后就停止运行
@@ -406,7 +417,6 @@ class Cpu:
         self.clock_count += cycle_count
         while self.clock_count > 0:
             self.check_log()
-
             op = self.memory[self.registers['PC']]
             cycles = self.instructions[op](self)
             self.all_cycles += cycles
@@ -440,8 +450,9 @@ class Cpu:
               hex(log_P), hex(log_SP))
         print()
         if (self.registers['PC'] != log_addr) or (self.registers['A'] != log_A) or (
-                self.registers['X'] != log_X) or (self.registers['Y'] != log_Y):
-            print('bu yi zhi ')
+                self.registers['X'] != log_X) or (self.registers['Y'] != log_Y) or (
+                self.registers['P'] != log_P) or (self.registers['SP'] != log_SP):
+            input('bu yi zhi ')
 
     def read_log(self):
         self.nes_log = False
@@ -459,7 +470,7 @@ def test_cpu():
         cpu = Cpu(nes_data=nes)
         cpu.read_log()
         while True:
-            cpu.run_cycles(10)
+            cpu.run_cycles(100)
             text = input('按q退出，其他任意键继续')
             if text == 'q':
                 break
