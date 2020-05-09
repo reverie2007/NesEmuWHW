@@ -1,38 +1,21 @@
-"""
-    fc模拟器，2A03cpu模拟
-"""
-import numpy as np
-from nesloader import NesLoader
 import zerafael_instructions as instructions
-import cpu6502
-from ppu import PPU
+import pygame
+from zerafael_ppu import ppu
+import zerafael_joypad as joypad
 
 
-class Cpu:
-    """
-    红白机2A03（6502） cpu模拟，
-    一、实现全部指令，通过一个字典，指令代码为key，需要调用的函数为value（函数doc字符串能否用于反汇编？？没必要）
-    二、16位寻址最高支持64k内存，地址0x0000-0xffff，没有专用io指令，对外设的访问通过读写特定段内存实现
-    三、某模拟器同步方法，cpu运行113个周期，调用ppu更新一条扫描线，cpu运行约1000周期，读取一次按键
-        指令周期的作用，一个指令实际需要n个周期完成，代码模拟直接得到结果，那本次循环就相当于执行了n个周期
-    四、b站搬运youtube视频中带总线是如何模拟的？是否模拟更精确？
+class cpu:
 
-    """
+    def __init__(self, cartridge):
+        self.ppu = ppu(self, cartridge)
 
-    def __init__(self, nes_data):
-        # 外部依赖，暂时用ppu，实际应该与总线打交道
-        self.ppu = PPU()
-
-        # 寄存器
-        self.registers = {'PC': 0,  # Program Counter，16位，
-                          'SP': 0xFD,  # Stack Pointer,原代码是0xFF，好像应该是0xfd
+        self.registers = {'PC': 0,  # Program Counter
+                          'SP': 0xFF,  # Stack Pointer
                           'A': 0,  # Accumulator
                           'X': 0,  # Register X
                           'Y': 0,  # Register Y
                           'P': 0b00100000}  # Processor Status
-        # 状态标志，有些标志硬件自动设置，模拟时要完成对应功能
-        # cpu使用1 bit表示一个标志，软件模拟就不必了吧？  ——压栈要用
-        # 有一个将标志寄存器8位压栈操作，不模拟该寄存器，分开保存状态，如何保存所有状态？
+
         self.statusFlags = {'c': 0,  # Carry Flag
                             'z': 1,  # Zero Flag
                             'i': 2,  # Interrupt Disable
@@ -41,16 +24,14 @@ class Cpu:
                             'v': 6,  # Overflow Flag
                             'n': 7}  # Negative Flag
 
-        # 模拟64k内存
         self.memory = [0] * 0x10000
+        self.scanline = 0
+        self.cart = cartridge
+        self.initMemory()
+        self.registers['PC'] = self.memory[0xFFFC] | (self.memory[0xFFFD] << 8)
+        self.count = 0
+        self.z = 0
 
-        # 记录cpu共运行了多少周期，用于测试
-        self.all_cycles = 0
-        # 临时载入一个nes用于测试
-        self.cart = nes_data
-        self.init_memory()
-
-        # 暂时使用zerafael的指令实现
         self.instructions = {0x00: instructions.BRK_Implied,
                              0x01: instructions.ORA_Indirect_X,
                              0x05: instructions.ORA_Zero,
@@ -286,15 +267,17 @@ class Cpu:
                              0xFF: instructions.ISB_Absolute_X
                              }
 
-        # 一切准备好之后，设置启动地址
-        # 设置开始指令所处的地址存放在0xFFFC,0xFFFD两个字节，将这两个地址存入程序计数器，
-        # 开始时cpu从程序计数器获取地址，从获取的地址开始执行，
-        # 小端模式低位存低位，高位存高位。
-        self.registers['PC'] = self.memory[0xFFFC] | (self.memory[0xFFFD] << 8) & 0xffff
-        self.clock_count = 0
+    def initMemory(self):
+        if self.cart.mapperNumber != 0:
+            print("Mapper not available yet")
+            exit(1)
 
-        # 开始禁止中断标志是1？？？
-        self.registers['P'] |= 0b00000100
+        for i in range(len(self.cart.prgRomData)):
+            self.memory[i + 0x8000] = self.cart.prgRomData[i]
+            if self.cart.prgRomCount == 1:
+                self.memory[i + 0xC000] = self.cart.prgRomData[i]
+        for i in range(0x20):
+            self.memory[i + 0x4000] = 0xFF
 
     def doNMI(self):
         self.pushStack((self.registers['PC'] >> 8) & 0xFF)
@@ -382,100 +365,34 @@ class Cpu:
         value = self.readMemory(0x100 + self.registers['SP'])
         return value
 
-    def init_memory(self):
-        """
-        初始化内存，根据mapper有不同的初始化方法。
-        目前只完成mapper0
-        :return:
-        """
-        # 检查mapper，暂未实现
-
-        # 将prg rom放入内存对应位置，一般从0x8000开始
-        if len(self.cart.prg_rom) == 0x4000:
-            for i in range(len(self.cart.prg_rom)):
-                self.memory[i + 0x8000] = self.cart.prg_rom[i]
-                self.memory[i + 0xC000] = self.cart.prg_rom[i]
-        else:
-            for i in range(len(self.cart.prg_rom)):
-                self.memory[i + 0x8000] = self.cart.prg_rom[i]
-
-        for i in range(0x20):
-            self.memory[i + 0x4000] = 0xFF
-
-        start = self.memory[0xFFFC] | (self.memory[0xFFFD] << 8) & 0xffff
-        print('开始地址：', hex(start))
-
-    def run_cycles(self, cycle_count):
-        """
-        cpu运行指定周期次数，每次cycle_count减去指令周期，小于0之后就停止运行
-        初步想法是使用指定周期模拟原机器速度，控制游戏速度。
-        原机器cpu运行速度1.7M，画面60帧/秒，创建一个计时器，每秒触发60次，
-        每次为cpu_count增加固定次数，cpu运行次数用完就停止，能否实现计时器控制刷新及运行速度？？
-        :param cycle_count:
-        :return:
-        """
-        self.clock_count += cycle_count
-        while self.clock_count > 0:
-            self.check_log()
-            op = self.memory[self.registers['PC']]
-            cycles = self.instructions[op](self)
-            self.all_cycles += cycles
-            self.clock_count -= cycles
-
-    def check_log(self):
-        """
-        检查指令及寄存器状态，是否与另一模拟器（公认模拟准确）一致。
-        :return:
-        """
-        op = self.memory[self.registers['PC']]
-        # 检查指令与寄存器状态是否与已有log一致
-        exist_log = self.nes_log_file.readline()
-        logs = exist_log.split()
-        log_addr = int('0x' + logs[0], 16)
-        log_op = int('0x' + logs[1], 16)
-        for i in range(len(logs)):
-            if 'A:' in logs[i]:
-                log_A = int('0x' + logs[i][2:], 16)
-                log_X = int('0x' + logs[i + 1][2:], 16)
-                log_Y = int('0x' + logs[i + 2][2:], 16)
-                log_P = int('0x' + logs[i + 3][2:], 16)
-                log_SP = int('0x' + logs[i + 4][3:], 16)
-                break
-        # 当前执行指令，以及本指令  执行完  之后的寄存器状态
-        print(hex(self.registers['PC']), ':', hex(op), cpu6502.op_data[op], 'A:',
-              hex(self.registers['A']), hex(self.registers['X']), hex(self.registers['Y']),
-              hex(self.registers['P']), hex(self.registers['SP']))
-        print(hex(log_addr), ':', hex(log_op), cpu6502.op_data[op], 'A:',
-              hex(log_A), hex(log_X), hex(log_Y),
-              hex(log_P), hex(log_SP))
-        print()
-        if (self.registers['PC'] != log_addr) or (self.registers['A'] != log_A) or (
-                self.registers['X'] != log_X) or (self.registers['Y'] != log_Y) or (
-                self.registers['P'] != log_P) or (self.registers['SP'] != log_SP):
-            input('bu yi zhi ')
-
-    def read_log(self):
-        self.nes_log = False
-        self.nes_log_file = open('nestest.log', 'r')
-        # self.nes_log_file.readline()
-
-
-def test_cpu():
-    """
-    测试代码
-    :return:
-    """
-    nes = NesLoader('nestest.nes')
-    if nes.open_success:
-        cpu = Cpu(nes_data=nes)
-        cpu.read_log()
+    def run(self):
+        cyclesClock = 0
+        a = 0
+        self.z = 0
+        ctrl = 0
+        print('开始位置：', hex(self.memory[self.registers['PC']]), hex(self.registers['PC']))
         while True:
-            cpu.run_cycles(100)
-            text = input('按q退出，其他任意键继续')
-            if text == 'q':
-                break
-        cpu.nes_log_file.close()
+            ctrl += 1
+            if ctrl > 1000:
+                ctrl = 0
+                pygame.event.poll()
+                joypad.keys = pygame.key.get_pressed()
+                if joypad.keys[pygame.K_ESCAPE] == 1:
+                    exit()
 
+            # Executa a instrucao e armazena
+            # print(hex(self.memory[self.registers['PC']]), hex(self.registers['PC']))
+            cycles = self.instructions[self.memory[self.registers['PC']]](self)
 
-if __name__ == '__main__':
-    test_cpu()
+            cyclesClock += cycles
+            if cyclesClock > 113:
+                cyclesClock = 0
+
+                if self.scanline >= 0 and self.scanline < 240:
+                    self.ppu.doScanline()
+                elif self.scanline == 241:
+                    self.ppu.enterVBlank()
+                elif self.scanline == 261:
+                    self.scanline = -1
+
+                self.scanline += 1

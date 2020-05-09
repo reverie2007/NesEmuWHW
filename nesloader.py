@@ -11,6 +11,7 @@ class NesLoader:
         self._trainer = None
         self.prg_rom = None
         self.chr_rom = None
+        self.mirror = 0
         self.open_success = False
         if filename:
             self.open_nes(file_name=filename)
@@ -76,6 +77,7 @@ class NesLoader:
         self._header['SYMBOL_T'] = (flag6 & 4 == 4)  # T: Trainer标志位.  1表示 $7000-$71FF加载 Trainer
         self._header['SYMBOL_B'] = (flag6 & 2 == 2)  # B: SRAM标志位 $6000-$7FFF拥有电池供电的SRAM.
         self._header['SYMBOL_M'] = (flag6 & 1 == 1)  # M: 镜像标志位.  0 = 水平, 1 = 垂直.
+
         flag7 = nes_buffer[7]
         self._header['MAPPER_NUM_HIGH4'] = flag7 >> 4
         # A file is a NES 2.0 ROM image file if it begins with "NES<EOF>" (same as iNES)
@@ -105,6 +107,10 @@ class NesLoader:
                 raise TypeError('读取chr rom时越界，错误的iNES文件格式！')
             length = 8192 * self._header['CHR_ROM_SIZE_8KB']
             self.chr_rom = nes_buffer[current_pos:(current_pos + length)]
+
+        # 镜像标志
+        if self._header['SYMBOL_M']:
+            self.mirror = 1
         # 剩下的内容暂不读取
 
         # 读取完毕后，设置成功标志
