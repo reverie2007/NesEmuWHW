@@ -11,7 +11,7 @@ class YyNesPpu:
 
     def __init__(self, cpu, cartridge):
         self.cpu = cpu
-
+        self.screen = None
         self.scan_line = 0
 
         self.VRAM = [0] * 0x10000
@@ -122,6 +122,11 @@ class YyNesPpu:
         self.matrix = [[0] * 240 for i in range(256)]
 
     def set_screen(self, screen):
+        """
+        设置显示，所有绘制都在这个屏幕上
+        :param screen:
+        :return:
+        """
         self.screen = screen
         self.screen.fill((1, 1, 1))
 

@@ -6,7 +6,7 @@
       <sourceFolder url="file://$MODULE_DIR$/pygame-1.9.6.dist-info" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/pygame" isTestSource="false" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.6 (NesEmuWHW)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Python 3.6 (py36pygame)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="TestRunnerService">

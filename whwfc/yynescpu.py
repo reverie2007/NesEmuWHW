@@ -24,12 +24,13 @@ class YyNesCpu:
         self.ppu = YyNesPpu(self, nes_data)
 
         # 寄存器
-        self.registers = {'PC': 0,  # Program Counter，16位，
-                          'SP': 0xFD,  # Stack Pointer,原代码是0xFF，好像应该是0xfd
-                          'A': 0,  # Accumulator
-                          'X': 0,  # Register X
-                          'Y': 0,  # Register Y
-                          'P': 0b00100000}  # Processor Status
+        self.registers_pc = 0  # Program Counter，16位
+        self.registers_sp = 0xfd  # Stack Pointer,原代码是0xFF，看log里面好像应该是0xfd
+        self.registers_a = 0
+        self.registers_x = 0
+        self.registers_y = 0
+        self.registers_p = 0b00100000  # Processor Status
+
         # 状态标志，有些标志硬件自动设置，模拟时要完成对应功能
         # cpu使用1 bit表示一个标志，软件模拟就不必了吧？  ——压栈要用
         # 有一个将标志寄存器8位压栈操作，不模拟该寄存器，分开保存状态，如何保存所有状态？
@@ -43,6 +44,7 @@ class YyNesCpu:
 
         # 模拟64k内存
         self.memory = [0] * 0x10000
+        # 使用numpy模拟64k内存试试, 会溢出
 
         # 记录cpu共运行了多少周期，用于测试
         self.all_cycles = 0
@@ -290,17 +292,17 @@ class YyNesCpu:
         # 设置开始指令所处的地址存放在0xFFFC,0xFFFD两个字节，将这两个地址存入程序计数器，
         # 开始时cpu从程序计数器获取地址，从获取的地址开始执行，
         # 小端模式低位存低位，高位存高位。
-        self.registers['PC'] = self.memory[0xFFFC] | (self.memory[0xFFFD] << 8) & 0xffff
+        self.registers_pc = self.memory[0xFFFC] | (self.memory[0xFFFD] << 8) & 0xffff
         self.clock_count = 0
         self.z = 0
         # 开始禁止中断标志是1？？？
-        # self.registers['P'] |= 0b00000100
+        # self.registers_p |= 0b00000100
 
     def doNMI(self):
-        self.pushStack((self.registers['PC'] >> 8) & 0xFF)
-        self.pushStack(self.registers['PC'] & 0xFF)
-        self.pushStack(self.registers['P'])
-        self.registers['PC'] = self.memory[0xFFFA] | (self.memory[0xFFFB] << 8)
+        self.pushStack((self.registers_pc >> 8) & 0xFF)
+        self.pushStack(self.registers_pc & 0xFF)
+        self.pushStack(self.registers_p)
+        self.registers_pc = self.memory[0xFFFA] | (self.memory[0xFFFB] << 8)
         self.z = 1
 
     def writeMemory(self, address, value):
@@ -336,6 +338,7 @@ class YyNesCpu:
         elif address < 0x8000:
             pass
         else:
+            # 0x8000以上是prg_rom,是只读的，写入应该是控制mapper
             self.memory[address] = value
 
     def readMemory(self, address):
@@ -363,23 +366,23 @@ class YyNesCpu:
 
     def setStatus(self, flag, value):
         if value:
-            self.registers['P'] |= 1 << flag
+            self.registers_p |= 1 << flag
         else:
-            self.registers['P'] &= ~(1 << flag)
+            self.registers_p &= ~(1 << flag)
 
     def getStatus(self, flag):
-        if (self.registers['P'] & (1 << flag)) == 0:
+        if (self.registers_p & (1 << flag)) == 0:
             return 0
         else:
             return 1
 
     def pushStack(self, value):
-        self.writeMemory(0x100 + self.registers['SP'], value)
-        self.registers['SP'] -= 1
+        self.writeMemory(0x100 + self.registers_sp, value)
+        self.registers_sp -= 1
 
     def pullStack(self):
-        self.registers['SP'] += 1
-        value = self.readMemory(0x100 + self.registers['SP'])
+        self.registers_sp += 1
+        value = self.readMemory(0x100 + self.registers_sp)
         return value
 
     def init_memory(self):
@@ -417,7 +420,7 @@ class YyNesCpu:
         self.clock_count += cycle_count
         while self.clock_count > 0:
             # self.check_log()
-            op = self.memory[self.registers['PC']]
+            op = self.memory[self.registers_pc]
             cycles = self.instructions[op](self)
             # self.all_cycles += cycles
             self.clock_count -= cycles
@@ -427,7 +430,7 @@ class YyNesCpu:
         检查指令及寄存器状态，是否与另一模拟器（公认模拟准确）一致。
         :return:
         """
-        op = self.memory[self.registers['PC']]
+        op = self.memory[self.registers_pc]
         # 检查指令与寄存器状态是否与已有log一致
         exist_log = self.nes_log_file.readline()
         logs = exist_log.split()
@@ -442,16 +445,16 @@ class YyNesCpu:
                 log_SP = int('0x' + logs[i + 4][3:], 16)
                 break
         # 当前执行指令，以及本指令  执行完  之后的寄存器状态
-        print(hex(self.registers['PC']), ':', hex(op), cpu6502.op_data[op], 'A:',
-              hex(self.registers['A']), hex(self.registers['X']), hex(self.registers['Y']),
-              hex(self.registers['P']), hex(self.registers['SP']))
+        print(hex(self.registers_pc), ':', hex(op), cpu6502.op_data[op], 'A:',
+              hex(self.registers_a), hex(self.registers_x), hex(self.registers['Y']),
+              hex(self.registers_p), hex(self.registers_sp))
         print(hex(log_addr), ':', hex(log_op), cpu6502.op_data[op], 'A:',
               hex(log_A), hex(log_X), hex(log_Y),
               hex(log_P), hex(log_SP))
         print()
-        if (self.registers['PC'] != log_addr) or (self.registers['A'] != log_A) or (
-                self.registers['X'] != log_X) or (self.registers['Y'] != log_Y) or (
-                self.registers['P'] != log_P) or (self.registers['SP'] != log_SP):
+        if (self.registers_pc != log_addr) or (self.registers_a != log_A) or (
+                self.registers_x != log_X) or (self.registers['Y'] != log_Y) or (
+                self.registers_p != log_P) or (self.registers_sp != log_SP):
             input('bu yi zhi ')
 
     def read_log(self):

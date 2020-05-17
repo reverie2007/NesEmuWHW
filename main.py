@@ -45,13 +45,10 @@ def main():
             exit()
         # 每帧261条扫描线，每条扫描线首先运行cpu固定周期，然后画一条扫描线
         for i in range(261):
-            t1 = time.get_ticks()
             nes_cpu.run_cycles(113)
-            t2 = time.get_ticks()
             nes_cpu.ppu.do_scan_line()
-        t3 = time.get_ticks()
         fps = clock.get_fps()
-        text = font_fps.render(u'fps=%d,time:cpu=%d,ppu=%d' % (fps, (t2 - t1), (t3 - t2)), True, (255, 0, 0),
+        text = font_fps.render(u'fps=%d' % fps, True, (255, 0, 0),
                                (0, 255, 0))
         nes_cpu.ppu.screen.blit(text, (10, 5))
 
